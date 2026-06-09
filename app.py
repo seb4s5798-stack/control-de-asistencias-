@@ -5,7 +5,7 @@ import os
 import io
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from openpyxl.drawing.image import Image as OpenpyxlImage # Librería para insertar logos en Excel
+from openpyxl.drawing.image import Image as OpenpyxlImage
 
 # Configuración de la página web
 st.set_page_config(page_title="Control de Asistencias - Sistema Corporativo", layout="wide")
@@ -13,7 +13,7 @@ st.set_page_config(page_title="Control de Asistencias - Sistema Corporativo", la
 if 'modo_impresion' not in st.session_state:
     st.session_state['modo_impresion'] = False
 
-# Estilos visuales sobrios
+# Estilos visuales sobrios corporativos
 st.markdown("""
     <style>
     html, body, [data-testid="stSidebar"] {
@@ -63,7 +63,7 @@ if 'asignacion_filas' not in st.session_state:
 if 'observaciones_diarias' not in st.session_state:
     st.session_state['observaciones_diarias'] = {}
 
-# Nombre del archivo de logo unificado
+# Nombre unificado del logo
 logo_file_name = 'image_963f8c.png'
 
 with st.sidebar:
@@ -162,11 +162,10 @@ if archivo_subido is not None:
         if suc_filtro != "-- Todas las Sucursales --": df_filtrado = df_filtrado[df_filtrado['Centrodecosto'] == suc_filtro]
         if pto_filtro != "-- Todos los Puestos --": df_filtrado = df_filtrado[df_filtrado['Puesto'] == pto_filtro]
 
-        st.markdown("<b style='color:#4A3525;'>Matriz de Control Diaria e Incidencias</b>", unsafe_allow_html=True)
+        st.markdown("<b style='color:#4A3525;'>Matriz de Control Diaria, Incidencias y Tiempo Faltante</b>", unsafe_allow_html=True)
         
         opciones_turnos = list(st.session_state['lista_horarios'].keys())
         registros_finales = []
-        tot_retardos, tot_extra, tot_faltante = 0, 0, 0
         
         for idx, row in df_filtrado.iterrows():
             colaborador = row['Empleado']
@@ -202,32 +201,31 @@ if archivo_subido is not None:
 
             conf = st.session_state['lista_horarios'].get(turno_seleccionado, {"entrada": datetime.time(0,0), "salida": datetime.time(0,0)})
             e_teorica = conf['entrada']
-            s_teorica = conf['salida']
             
             mins_trabajados = diferencia_minutos(s_real, e_real) if (s_real and e_real) else 0
             if mins_trabajados < 0: mins_trabajados = 0
             
             style_alerta = "class='alerta-jornada'" if (turno_seleccionado != "Descanso Obligatorio" and mins_trabajados < 480) else ""
             
+            # Cálculo de Retardo
             retardo = 0
             if e_real and e_teorica and e_teorica != datetime.time(0,0):
                 dif_ent = diferencia_minutos(e_real, e_teorica)
                 if dif_ent >= 11:
                     retardo = dif_ent - 10
-                    tot_retardos += retardo
 
-            tiempo_extra, tiempo_faltante = 0, 0
-            if e_teorica != datetime.time(0,0):
-                if s_real and e_real:
-                    if mins_trabajados > 480:
-                        tiempo_extra = mins_trabajados - 480
-                        tot_extra += tiempo_extra
-                    elif mins_trabajados < 480:
-                        tiempo_faltante = 480 - mins_trabajados
-                        tot_faltante += tiempo_faltante
-                elif not s_real and e_real:
-                    tiempo_faltante = 480
-                    tot_faltante += 480
+            # --- NUEVO APARTADO: CALCULO DE TIEMPO FALTANTE PARA CUMPLIR LA JORNADA ---
+            tiempo_faltante_texto = "Jornada OK"
+            color_faltante = "inherit"
+            
+            if turno_seleccionado != "Descanso Obligatorio":
+                if mins_trabajados < 480:
+                    faltan_mins = 480 - mins_trabajados
+                    tiempo_faltante_texto = f"Faltan: {faltan_mins // 60}:{faltan_mins % 60:02d}"
+                    color_faltante = "#E65100"  # Tono naranja/marrón de advertencia corporativa
+                else:
+                    tiempo_faltante_texto = "Completa"
+                    color_faltante = "#388E3C"  # Verde exitoso
 
             def txt_mins(m): return f"{m // 60}:{m % 60:02d}:00" if m > 0 else "N/A"
             texto_laborado = f"{mins_trabajados // 60}:{mins_trabajados % 60:02d}:00" if mins_trabajados > 0 else "00:00:00"
@@ -240,14 +238,15 @@ if archivo_subido is not None:
                         <td style='padding: 6px; width:15%;'>{fecha_str} ({nombre_dia})</td>
                         <td style='padding: 6px; width:11%;'>Ent: {row['Entrada_Real'] if row['Entrada_Real'] else '--:--'}</td>
                         <td style='padding: 6px; width:11%;'>Sal: {row['Salida_Real'] if row['Salida_Real'] else 'Falta'}</td>
-                        <td style='padding: 6px; width:11%;' {style_alerta}>{texto_laborado}</td>
+                        <td style='padding: 6px; width:11%;' {style_alerta}>Lab: {texto_laborado}</td>
+                        <td style='padding: 6px; width:15%; color: {color_faltante}; font-weight: bold;'>{tiempo_faltante_texto}</td>
                         <td style='padding: 6px; width:10%; color: {"#D32F2F" if retardo > 0 else "inherit"};'>Ret: {f"{retardo} min" if retardo > 0 else "-"}</td>
-                        <td style='padding: 6px; width:10%; color: {"#388E3C" if tiempo_extra > 0 else "inherit"};'>Ext: {txt_mins(tiempo_extra)}</td>
                     </tr>
                     {"<tr style='background-color:#FDFBF7;'><td colspan='7' style='padding: 2px 6px 4px 6px; color:#5D4037; font-size:11px;'><b>Nota:</b> " + nota_diaria + "</td></tr>" if nota_diaria else ""}
                 </table>
                 """, unsafe_allow_html=True)
 
+            # Inclusión del tiempo restante en la estructura de exportación
             registros_finales.append({
                 "Fecha": fecha_str,
                 "Hora": row['Entrada_Real'] if row['Entrada_Real'] else "N/A",
@@ -257,7 +256,7 @@ if archivo_subido is not None:
                 "Puesto": row['Puesto'],
                 "Minutos de retrado": f"{retardo} min" if retardo > 0 else "N/A",
                 "Horas de trabajo": texto_laborado,
-                "Tiempo extra": txt_mins(tiempo_extra) if tiempo_extra > 0 else "",
+                "Tiempo Restante": tiempo_faltante_texto,
                 "Observaciones": nota_diaria
             })
             
@@ -271,7 +270,7 @@ if archivo_subido is not None:
                     "Puesto": "",
                     "Minutos de retrado": "",
                     "Horas de trabajo": "",
-                    "Tiempo extra": "",
+                    "Tiempo Restante": "",
                     "Observaciones": ""
                 })
 
@@ -285,15 +284,12 @@ if archivo_subido is not None:
             ws.title = "CEDIS"
             ws.views.sheetView[0].showGridLines = True
             
-            # --- INSERCIÓN DEL LOGO CORPORATIVO ---
             if os.path.exists(logo_file_name):
                 img = OpenpyxlImage(logo_file_name)
-                # Redimensionamos proporcionalmente para que encaje estético en la parte superior (aprox 75x75 px)
                 img.width = 75
                 img.height = 75
                 ws.add_image(img, 'A2')
             
-            # Espaciado y títulos institucionales corridos a la columna B para no encimarse con el logo
             ws.append([])
             ws.append([])
             ws.append([])
@@ -304,12 +300,11 @@ if archivo_subido is not None:
             ws["B4"].font = Font(name="Calibri", size=11, bold=True)
             ws["B5"].font = Font(name="Calibri", size=11, bold=True, underline="single")
             
-            # Altura personalizada para filas de la cabecera para albergar cómodamente el logo
             ws.row_dimensions[2].height = 25
             ws.row_dimensions[3].height = 25
             
-            # Columnas del formato original
-            headers = ["Fecha", "Hora", "Tiporegistro", "Empleado", "Centrodecosto", "Puesto", "Minutos de retrado", "Horas de trabajo", "Tiempo extra", "Observaciones"]
+            # Encabezados con la nueva columna incorporada de forma simétrica
+            headers = ["Fecha", "Hora", "Tiporegistro", "Empleado", "Centrodecosto", "Puesto", "Minutos de retrado", "Horas de trabajo", "Tiempo Restante", "Observaciones"]
             ws.append(headers)
             
             header_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
