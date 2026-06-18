@@ -86,13 +86,26 @@ def string_a_time(time_str):
         if pd.isna(time_str) or time_str == "" or time_str == "nan":
             return None
         parts = str(time_str).strip().split(':')
-        return datetime.time(int(parts[0]), int(parts[1]), int(parts[2]) if len(parts)>2 else 0)
+        return datetime.time(int(parts[0]), int(parts[1]), datetime.time(0,0).second)
     except:
         return None
 
 def diferencia_minutos(t1, t2):
     if not t1 or not t2: return 0
     return (t1.hour * 60 + t1.minute) - (t2.hour * 60 + t2.minute)
+
+def limpiar_fecha_biometrico(fecha_str):
+    meses_es = {
+        'ene.': '01', 'feb.': '02', 'mar.': '03', 'abr.': '04',
+        'may.': '05', 'jun.': '06', 'jul.': '07', 'ago.': '08',
+        'sep.': '09', 'oct.': '10', 'nov.': '11', 'dic.': '12'
+    }
+    f_limpia = str(fecha_str).lower().strip()
+    for mes_txt, mes_num in meses_es.items():
+        if mes_txt in f_limpia:
+            f_limpia = f_limpia.replace(mes_txt, mes_num)
+            break
+    return f_limpia.replace('-', '/')
 
 dias_espanol = {0: 'Lunes', 1: 'Martes', 2: 'Miércoles', 3: 'Jueves', 4: 'Viernes', 5: 'Sábado', 6: 'Domingo'}
 
@@ -133,9 +146,18 @@ if archivo_subido is not None:
         else:
             df = pd.read_excel(archivo_subido)
             
-        df['Fechacompleta'] = df['Fechacompleta'].astype(str)
-        df['Hora'] = df['Hora'].astype(str)
+        # --- DETECTOR INTELIGENTE DE FORMATO ---
+        if 'ID de Usuario' in df.columns and 'Nombre' in df.columns:
+            df['Empleado'] = df['Nombre'].astype(str).str.strip() + " " + df['Apellido'].astype(str).str.strip()
+            df['Fechacompleta'] = df['Fecha'].apply(limpiar_fecha_biometrico)
+            df['Hora'] = df['Tiempo'].astype(str).str.strip()
+            df['Centrodecosto'] = "General"
+            df['Puesto'] = "Operador"
+        else:
+            df['Fechacompleta'] = df['Fechacompleta'].astype(str)
+            df['Hora'] = df['Hora'].astype(str)
 
+        # Agrupación y ordenamiento de registros diarios
         grouped = df.groupby(['Empleado', 'Fechacompleta', 'Centrodecosto', 'Puesto']).agg(
             Horas_Registradas=('Hora', list)
         ).reset_index()
@@ -175,7 +197,7 @@ if archivo_subido is not None:
                 fecha_obj = datetime.date(int(partes[2]), int(partes[1]), int(partes[0]))
                 nombre_dia = dias_espanol[fecha_obj.weekday()]
             except:
-                nombre_dia = "Lunes"
+                nombre_dia = "Registrado"
 
             e_real = string_a_time(row['Entrada_Real'])
             s_real = string_a_time(row['Salida_Real'])
@@ -207,14 +229,12 @@ if archivo_subido is not None:
             
             style_alerta = "class='alerta-jornada'" if (turno_seleccionado != "Descanso Obligatorio" and mins_trabajados < 480) else ""
             
-            # Cálculo de Retardo
             retardo = 0
             if e_real and e_teorica and e_teorica != datetime.time(0,0):
                 dif_ent = diferencia_minutos(e_real, e_teorica)
                 if dif_ent >= 11:
                     retardo = dif_ent - 10
 
-            # --- NUEVO APARTADO: CALCULO DE TIEMPO FALTANTE PARA CUMPLIR LA JORNADA ---
             tiempo_faltante_texto = "Jornada OK"
             color_faltante = "inherit"
             
@@ -222,12 +242,11 @@ if archivo_subido is not None:
                 if mins_trabajados < 480:
                     faltan_mins = 480 - mins_trabajados
                     tiempo_faltante_texto = f"Faltan: {faltan_mins // 60}:{faltan_mins % 60:02d}"
-                    color_faltante = "#E65100"  # Tono naranja/marrón de advertencia corporativa
+                    color_faltante = "#E65100"
                 else:
                     tiempo_faltante_texto = "Completa"
-                    color_faltante = "#388E3C"  # Verde exitoso
+                    color_faltante = "#388E3C"
 
-            def txt_mins(m): return f"{m // 60}:{m % 60:02d}:00" if m > 0 else "N/A"
             texto_laborado = f"{mins_trabajados // 60}:{mins_trabajados % 60:02d}:00" if mins_trabajados > 0 else "00:00:00"
 
             with col_datos:
@@ -246,7 +265,6 @@ if archivo_subido is not None:
                 </table>
                 """, unsafe_allow_html=True)
 
-            # Inclusión del tiempo restante en la estructura de exportación
             registros_finales.append({
                 "Fecha": fecha_str,
                 "Hora": row['Entrada_Real'] if row['Entrada_Real'] else "N/A",
@@ -303,7 +321,6 @@ if archivo_subido is not None:
             ws.row_dimensions[2].height = 25
             ws.row_dimensions[3].height = 25
             
-            # Encabezados con la nueva columna incorporada de forma simétrica
             headers = ["Fecha", "Hora", "Tiporegistro", "Empleado", "Centrodecosto", "Puesto", "Minutos de retrado", "Horas de trabajo", "Tiempo Restante", "Observaciones"]
             ws.append(headers)
             
