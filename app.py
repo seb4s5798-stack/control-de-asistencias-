@@ -63,14 +63,14 @@ if 'asignacion_filas' not in st.session_state:
 if 'observaciones_diarias' not in st.session_state:
     st.session_state['observaciones_diarias'] = {}
 
-# Nombre unificado del logo
+# Nombre unificado del logo (Protegido por si no se encuentra en la carpeta)
 logo_file_name = 'image_963f8c.png'
 
 with st.sidebar:
     if os.path.exists(logo_file_name):
         st.image(logo_file_name, use_container_width=True)
     else:
-        st.markdown("<h2 style='text-align: center; color: #4A3525;'>SISTEMA</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center; color: #4A3525;'>MALINALLI</h2>", unsafe_allow_html=True)
     
     st.markdown("<hr style='border-top: 1px solid #ddd;'>", unsafe_allow_html=True)
     st.markdown("<b style='color: #4A3525;'>1. Cargar Archivo del Checador</b>", unsafe_allow_html=True)
@@ -86,7 +86,7 @@ def string_a_time(time_str):
         if pd.isna(time_str) or time_str == "" or time_str == "nan":
             return None
         parts = str(time_str).strip().split(':')
-        return datetime.time(int(parts[0]), int(parts[1]), datetime.time(0,0).second)
+        return datetime.time(int(parts[0]), int(parts[1]), 0)
     except:
         return None
 
@@ -107,13 +107,20 @@ def limpiar_fecha_biometrico(fecha_str):
             break
     return f_limpia.replace('-', '/')
 
+def Convertir_A_Fecha_Obj(fecha_str):
+    try:
+        partes = fecha_str.split('/')
+        return datetime.date(int(partes[2]), int(partes[1]), int(partes[0]))
+    except:
+        return None
+
 dias_espanol = {0: 'Lunes', 1: 'Martes', 2: 'Miércoles', 3: 'Jueves', 4: 'Viernes', 5: 'Sábado', 6: 'Domingo'}
 
-st.header("Reporte Ejecutivo de Asistencias e Incidencias")
+st.header("Reporte Executive de Asistencias e Incidencias")
 
 if not st.session_state['modo_impresion']:
     st.markdown("### ⚙️ Definición del Catálogo de Horarios")
-    with st.expander("Abrir Administrador de Horarios", expanded=True):
+    with st.expander("Abrir Administrador de Horarios", expanded=False):
         c_crear, c_ver = st.columns([1, 1])
         with c_crear:
             nombre_del_turno = st.text_input("Nombre del Turno:", key="admin_nom_turno")
@@ -149,6 +156,7 @@ if archivo_subido is not None:
         # --- DETECTOR INTELIGENTE DE FORMATO ---
         if 'ID de Usuario' in df.columns and 'Nombre' in df.columns:
             df['Empleado'] = df['Nombre'].astype(str).str.strip() + " " + df['Apellido'].astype(str).str.strip()
+            df['Apellido_Filtro'] = df['Apellido'].astype(str).str.strip()
             df['Fechacompleta'] = df['Fecha'].apply(limpiar_fecha_biometrico)
             df['Hora'] = df['Tiempo'].astype(str).str.strip()
             df['Centrodecosto'] = "General"
@@ -156,9 +164,10 @@ if archivo_subido is not None:
         else:
             df['Fechacompleta'] = df['Fechacompleta'].astype(str)
             df['Hora'] = df['Hora'].astype(str)
+            df['Apellido_Filtro'] = df['Empleado'].astype(str).apply(lambda x: x.split()[-1] if len(x.split()) > 0 else "")
 
         # Agrupación y ordenamiento de registros diarios
-        grouped = df.groupby(['Empleado', 'Fechacompleta', 'Centrodecosto', 'Puesto']).agg(
+        grouped = df.groupby(['Empleado', 'Fechacompleta', 'Centrodecosto', 'Puesto', 'Apellido_Filtro']).agg(
             Horas_Registradas=('Hora', list)
         ).reset_index()
 
@@ -170,19 +179,53 @@ if archivo_subido is not None:
 
         grouped[['Entrada_Real', 'Salida_Real']] = grouped.apply(procesar_jornada, axis=1)
         grouped = grouped.drop(columns=['Horas_Registradas'])
+        
+        # Crear columna de fecha real para ordenamiento y filtrado por rango
+        grouped['Fecha_Obj'] = grouped['Fechacompleta'].apply(Convertir_A_Fecha_Obj)
+        grouped = grouped.sort_values(by=['Fecha_Obj', 'Empleado']).reset_index(drop=True)
 
+        # --- PANEL DE FILTROS AVANZADOS ---
         if not st.session_state['modo_impresion']:
-            c1, c2, c3 = st.columns(3)
-            with c1: emp_filtro = st.selectbox("Colaborador:", ["-- Todos los Colaboradores --"] + sorted(list(grouped['Empleado'].unique())))
-            with c2: suc_filtro = st.selectbox("Sucursal:", ["-- Todas las Sucursales --"] + sorted(list(grouped['Centrodecosto'].unique())))
-            with c3: pto_filtro = st.selectbox("Puesto:", ["-- Todos los Puestos --"] + sorted(list(grouped['Puesto'].unique())))
+            st.markdown("### 🔍 Panel de Filtros de Búsqueda")
+            c_fil_ap, c_fil_fec, c_fil_suc = st.columns([2, 2, 2])
+            
+            with c_fil_ap:
+                busqueda_apellido = st.text_input("Filtrar por Apellidos o Nombre:", placeholder="Escribe para buscar...")
+            
+            with c_fil_fec:
+                min_date = grouped['Fecha_Obj'].min() if not grouped['Fecha_Obj'].isna().all() else datetime.date.today()
+                max_date = grouped['Fecha_Obj'].max() if not grouped['Fecha_Obj'].isna().all() else datetime.date.today()
+                
+                rango_fechas = st.date_input("Filtrar por Rango de Fechas:", value=(min_date, max_date))
+                
+            with c_fil_suc:
+                suc_filtro = st.selectbox("Filtrar por Sucursal:", ["-- Todas las Sucursales --"] + sorted(list(grouped['Centrodecosto'].unique())))
         else:
-            emp_filtro, suc_filtro, pto_filtro = "-- Todos los Colaboradores --", "-- Todas las Sucursales --", "-- Todos los Puestos --"
+            busqueda_apellido, rango_fechas, suc_filtro = "", None, "-- Todas las Sucursales --"
 
+        # --- APLICACIÓN DE LOS FILTROS ---
         df_filtrado = grouped.copy()
-        if emp_filtro != "-- Todos los Colaboradores --": df_filtrado = df_filtrado[df_filtrado['Empleado'] == emp_filtro]
-        if suc_filtro != "-- Todas las Sucursales --": df_filtrado = df_filtrado[df_filtrado['Centrodecosto'] == suc_filtro]
-        if pto_filtro != "-- Todos los Puestos --": df_filtrado = df_filtrado[df_filtrado['Puesto'] == pto_filtro]
+        
+        # 1. Filtro por Nombre / Apellido
+        if busqueda_apellido:
+            df_filtrado = df_filtrado[df_filtrado['Apellido_Filtro'].str.contains(busqueda_apellido, case=False) | 
+                                      df_filtrado['Empleado'].str.contains(busqueda_apellido, case=False)]
+        
+        # 2. Filtro por Rango de Fechas (CORREGIDO CONTRA INCIDENCIAS DE UN SOLO CLICK)
+        if rango_fechas:
+            if isinstance(rango_fechas, tuple) or isinstance(rango_fechas, list):
+                if len(rango_fechas) == 2:
+                    f_inicio, f_fin = rango_fechas
+                    df_filtrado = df_filtrado[(df_filtrado['Fecha_Obj'] >= f_inicio) & (df_filtrado['Fecha_Obj'] <= f_fin)]
+                elif len(rango_fechas) == 1:
+                    f_inicio = rango_fechas[0]
+                    df_filtrado = df_filtrado[df_filtrado['Fecha_Obj'] == f_inicio]
+            else:
+                df_filtrado = df_filtrado[df_filtrado['Fecha_Obj'] == rango_fechas]
+            
+        # 3. Filtro por Sucursal
+        if suc_filtro != "-- Todas las Sucursales --": 
+            df_filtrado = df_filtrado[df_filtrado['Centrodecosto'] == suc_filtro]
 
         st.markdown("<b style='color:#4A3525;'>Matriz de Control Diaria, Incidencias y Tiempo Faltante</b>", unsafe_allow_html=True)
         
@@ -192,11 +235,10 @@ if archivo_subido is not None:
         for idx, row in df_filtrado.iterrows():
             colaborador = row['Empleado']
             fecha_str = row['Fechacompleta']
-            try:
-                partes = fecha_str.split('/')
-                fecha_obj = datetime.date(int(partes[2]), int(partes[1]), int(partes[0]))
-                nombre_dia = dias_espanol[fecha_obj.weekday()]
-            except:
+            
+            if row['Fecha_Obj']:
+                nombre_dia = dias_espanol[row['Fecha_Obj'].weekday()]
+            else:
                 nombre_dia = "Registrado"
 
             e_real = string_a_time(row['Entrada_Real'])
@@ -303,10 +345,13 @@ if archivo_subido is not None:
             ws.views.sheetView[0].showGridLines = True
             
             if os.path.exists(logo_file_name):
-                img = OpenpyxlImage(logo_file_name)
-                img.width = 75
-                img.height = 75
-                ws.add_image(img, 'A2')
+                try:
+                    img = OpenpyxlImage(logo_file_name)
+                    img.width = 75
+                    img.height = 75
+                    ws.add_image(img, 'A2')
+                except:
+                    pass
             
             ws.append([])
             ws.append([])
